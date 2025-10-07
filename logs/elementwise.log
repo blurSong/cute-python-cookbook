@@ -1,0 +1,20 @@
+$ python elementwise.py --skip-verify --verbose
+Running elementwise add with M=1024, N=1024, dtype=Float32
+Dynamic layouts: A=False, B=False, C=False
+Verification skipped
+[CuTe Info] tiler_mn: (16, 128)
+[CuTe Info] tv_layout: ((32,4),(4,4)):((64,4),(16,1))
+[CuTe Info] gA: tensor<ptr<f32, gmem> o ((16,128),(64,8)):((1024,1),(16384,128))>
+[CuTe Info] gB: tensor<ptr<f32, gmem> o ((16,128),(64,8)):((1024,1),(16384,128))>
+[CuTe Info] gC: tensor<ptr<f32, gmem> o ((16,128),(64,8)):((1024,1),(16384,128))>
+[CuTe Info] ctaTvA: tensor<ptr<f32, gmem> o ((32,4),(4,4)):((4,4096),(1,1024))>
+[CuTe Info] ctaTvB: tensor<ptr<f32, gmem> o ((32,4),(4,4)):((4,4096),(1,1024))>
+[CuTe Info] ctaTvC: tensor<ptr<f32, gmem> o ((32,4),(4,4)):((4,4096),(1,1024))>
+[CuTe Info] thrA: tensor<ptr<f32, gmem> o (4,4):(1,1024)>
+[CuTe Info] thrB: tensor<ptr<f32, gmem> o (4,4):(1,1024)>
+[CuTe Info] thrC: tensor<ptr<f32, gmem> o (4,4):(1,1024)>
+[CuTe Info] thrCrd: tensor<(?{div=4},?{div=4}) o (4,4):(1@1,1@0)>
+Kernel compiled in 0.1574 seconds
+Kernel execution time: 0.0539 ms
+Achieved memory throughput: 233.52 GB/s
+PASS!

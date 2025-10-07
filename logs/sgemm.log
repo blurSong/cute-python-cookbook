@@ -1,0 +1,53 @@
+# pcash @ pcash-proart in ~/tsong/cuda/tsong-cuda-notes/python/cute [0:28:57]
+$ python sgemm.py
+Running sgemm with M=1024, N=4096, K=5120, BLAS TN.
+[CuTe Info] Tensor A !cute.memref<f32, gmem, align<16>, "(1024,5120):(5120,1)">
+[CuTe Info] Tensor B !cute.memref<f32, gmem, align<16>, "(4096,5120):(5120,1)">
+[CuTe Info] Tensor C !cute.memref<f32, gmem, align<16>, "(1024,4096):(4096,1)">
+[CuTe Info] Gemm tile size (128, 128, 8)
+[CuTe Info] Smem layout A (128,8,3):(1,132,1056)
+[CuTe Info] Smem layout B (128,8,3):(1,132,1056)
+[CuTe Info] Copy layout A Tiled Copy
+  Tiler MN:        (32:1,8:1)
+  TV Layout tiled: ((8,32),1):((32,1),0)
+Copy Atom
+  ThrID:           1:0
+  TV Layout Src:   (1,1):(0,1)
+  TV Layout Dst:   (1,1):(0,1)
+  Value type:      f32
+[CuTe Info] Copy layout B Tiled Copy
+  Tiler MN:        (32:1,8:1)
+  TV Layout tiled: ((8,32),1):((32,1),0)
+Copy Atom
+  ThrID:           1:0
+  TV Layout Src:   (1,1):(0,1)
+  TV Layout Dst:   (1,1):(0,1)
+  Value type:      f32
+[CuTe Info] Mma layout Tiled MMA
+  Thr Layout VMNK: (1,16,16,1):(0,16,1,0)
+  Permutation MNK: ((16,4):(4,1),(16,4):(4,1),_)
+MMA Atom
+  ThrID:           1:0
+  Shape MNK:       (1,1,1)
+  TV Layout A:     (1,1):(0,0)
+  TV Layout B:     (1,1):(0,0)
+  TV Layout C:     (1,1):(0,0)
+[CuTe Info] Sgemm grid [8, 32, 1]
+[CuTe Info] Sgemm block [256, 1, 1]
+[CuTe Info] gA !cute.memref<f32, gmem, align<16>, "(128,8,640):(5120,1,8)">
+[CuTe Info] gB !cute.memref<f32, gmem, align<16>, "(128,8,640):(5120,1,8)">
+[CuTe Info] gC !cute.memref<f32, gmem, align<16>, "(128,128):(4096,1)">
+[CuTe Info] tAgA tensor<ptr<f32, gmem> o ((1,1),4,1,640):((0,0),163840,0,8)>
+[CuTe Info] tAsA tensor<ptr<f32, smem> o ((1,1),4,1,3):((0,0),32,0,1056)>
+[CuTe Info] tBgB tensor<ptr<f32, gmem> o ((1,1),4,1,640):((0,0),163840,0,8)>
+[CuTe Info] tBsB tensor<ptr<f32, smem> o ((1,1),4,1,3):((0,0),32,0,1056)>
+[CuTe Info] crdA tensor<(?{div=128},0) o (128,8,640):(1@0,1@1,8@1)>
+[CuTe Info] crdB tensor<(?{div=128},0) o (128,8,640):(1@0,1@1,8@1)>
+[CuTe Info] tAcrdA tensor<(?,?) o ((1,1),4,1,640):((0,0),32@0,0,8@1)>
+[CuTe Info] tBcrdB tensor<(?,?) o ((1,1),4,1,640):((0,0),32@0,0,8@1)>
+[CuTe Info] tCsA tensor<ptr<f32, smem, align<16>> o (1,(4,2),8,3):(0,(1,64),132,1056)>
+[CuTe Info] tCsB tensor<ptr<f32, smem, align<16>> o (1,(4,2),8,3):(0,(1,64),132,1056)>
+[CuTe Info] tCgC tensor<ptr<f32, gmem, align<16>> o (1,(4,2),(4,2)):(0,(4096,262144),(1,64))>
+[CuTe Info] tCrA tensor<ptr<f32, rmem> o (1,(4,2),8):(0,(1,4),8)>
+[CuTe Info] tCrB tensor<ptr<f32, rmem> o (1,(4,2),8):(0,(1,4),8)>
+[CuTe Info] tCrC tensor<ptr<f32, rmem> o (1,(4,2),(4,2)):(0,(1,4),(8,32))>

@@ -1,0 +1,102 @@
+(cute)
+# pcash @ pcash-proart in ~/tsong/cuda/mycudanotes/python/cute [1:17:37]
+$ python layout_pg.py
+
+[Make Layouts]
+
+Basic layouts:
+Note that the cute default layout is left-most(column major).
+2d layout 4x16 row major: (4,16):(16,1)
+2d layout 4x16 column major: (4,16):(1,4)
+2d layout 4x(2x8) row major: (4,(2,8)):(16,(8,1))
+2d layout 4x(2x8) column major: (4,(2,8)):(1,(4,8))
+3d layout 4x16x32 row major: (4,16,32):(512,32,1)
+3d layout 4x16x32 column major: (4,16,32):(1,4,64)
+3d layout 4x16x(4x8) row major: (4,16,(4,8)):(512,32,(8,1))
+3d layout 4x16x(4x8) column major: (4,16,(4,8)):(1,4,(64,256))
+
+Identity layouts:
+2d layout 4x16 identity: (4,16):(1@0,1@1)
+3d layout 4x16x32 identity: (4,16,32):(1@0,1@1,1@2)
+
+Ordered layouts:
+2d layout 4x16 ordered (1,0): (4,16):(16,1)
+2d layout 4x16 ordered (0,1): (4,16):(1,4)
+3d layout 4x16x32 ordered (2,0,1): (4,16,32):(512,1,16)
+3d layout 4x16x32 ordered (2,1,0): (4,16,32):(512,32,1)
+3d layout 4x16x(4x8) ordered (2,1,0): (4,16,(4,8)):(512,32,(1,4))
+
+Composed(Swizzle) layout:
+layout 4x8: (128,512):(1,128)
+swizzled layout 4x8: S<3,3,3> o 0 o (128,512):(1,128)
+
+TV layout:
+thr layout: (5,8):(8,1), val layout: (5,64):(64,1)
+tv shape: (25, 512), tv layout: ((8,5),(64,5)):((1600,5),(25,1))
+
+[Layout Manipulation]
+
+YJSP layout: (114,514,1919,810):(1,114,58596,112445724)
+Index for (1, 1, 1, 1): 112504435
+Index for (1, 2, 3, 4): 449958913
+Index for (10, 10, 10, 10): 1125044350
+
+Selected layouts:
+Selected layout (0, 1): (114,514):(1,114)
+Selected layout (2, 3): (1919,810):(58596,112445724)
+
+Grouped layouts:
+Grouped layout (1, 3): (114,(514,1919),810):(1,(114,58596),112445724)
+Grouped layout (2, 4): (114,514,(1919,810)):(1,114,(58596,112445724))
+
+[Layout Algebra]
+
+Coalesce:
+Original layout: (4,(2,5)):(1,(5,2))
+Coalesced layout: (4,2,5):(1,5,2)
+Coalesced layout with target profile (1, 1): (4,(2,5)):(1,(5,2))
+
+Composition:
+Layout A: (10,2):(16,4)
+Layout B: (5,4):(1,5)
+Layout C := A o B: (5,(2,2)):(16,(80,4))
+
+By-mode Composition:
+Layout A: (12,(4,8)):(59,(13,1))
+Tiler B: (<cutlass.cute.core._Layout object at 0x7f81ad255f70>, <cutlass.cute.core._Layout object at 0x7f81ad3e0470>)
+Layout C := A o B: (3,(2,4)):(236,(26,1))
+complement(4:1, 24) is 6:4
+complement(6:1, 24) is 4:6
+complement((4,6):(1,4), 24) is 1:0
+complement(4:2, 24) is (2,3):(1,8)
+complement((2,4):(1,6), 24) is 3:2
+complement((2,2):(1,6), 24) is (3,2):(2,12)
+
+Logical Division:
+Layout A: (4,2,3):(2,1,8)
+Tiler B: 4:2
+Layout A ⊘ B: ((2,2),(2,3)):((4,1),(2,8))
+
+Logical Division By-mode:
+Layout A2: (9,(4,8)):(59,(13,1))
+Tiler B2: 3:3 and (2,4):(1,8)
+Layout A2 ⊘ B2: ((3,3),((2,4),(2,2))):((177,59),((13,2),(26,1)))
+
+Logical Product:
+Layout A: (2,2):(4,1)
+Tiler B: 6:1
+Layout A ⨂ B: ((2,2),(2,3)):((4,1),(2,8))
+
+Logical Product By-mode
+Layout A: (2,5):(5,1)
+Tiler B: 3:5 and 4:6. Wired!
+
+Blocked Product:
+Layout A: (2,5):(5,1)
+Layout B: (3,4):(1,3). Nice!
+Layout A ⨂ B Blocked: ((2,3),(5,4)):((5,10),(1,30))
+
+Raked Product:
+Layout A: (2,5):(5,1)
+Layout B: (3,4):(1,3). Nice!
+Layout A ⨂ B Raked: ((3,2),(4,5)):((10,5),(30,1))

@@ -1,0 +1,61 @@
+$ python sgemmref.py
+Running SIMT GEMM example:
+Running Ampere SIMT GEMM example:
+mnk: (1024, 4096, 5120)
+A major: k, B major: k, C major: n
+Static shape: False
+Warmup iterations: 2
+Iterations: 100
+Skip reference checking: False
+Use cold L2: False
+Shape a_tensor (1024, 5120) b_tensor (4096, 5120) c_tensor (1024, 4096)
+Stride a_tensor (5120, 1) b_tensor (5120, 1) c_tensor (4096, 1)
+Compiling kernel with cute.compile ...
+sA_layout !cute.layout<"(128,8,3):(1,132,1056)">
+sB_layout !cute.layout<"(128,8,3):(1,132,1056)">
+smem_size 25312
+tA !cute.layout<"(32,8):(8,1)">
+vA !cute.layout<"(1,1):(0,0)">
+tB !cute.layout<"(32,8):(8,1)">
+vB !cute.layout<"(1,1):(0,0)">
+tiled_copy_A !cute.tiled_copy<!cute_nvgpu.atom.simt_async_copy<f32, cache = always, 32 b>, layout_copy_tv = <"((8,32),1):((32,1),0)">, tiler_mn = <"[32:1;8:1]">>
+tiled_copy_B !cute.tiled_copy<!cute_nvgpu.atom.simt_async_copy<f32, cache = always, 32 b>, layout_copy_tv = <"((8,32),1):((32,1),0)">, tiler_mn = <"[32:1;8:1]">>
+atoms_layout !cute.layout<"(16,16,1):(16,1,0)">
+tiled_mma !cute.tiled_mma<!cute_nvgpu.atom.universal_fma<1x1x1, (f32, f32) -> f32 >, atom_layout_MNK = <"(16,16,1):(16,1,0)">, permutation_MNK = <"[(16,4):(4,1);(16,4):(4,1);_]">>
+grid_dim (Int32(IntValue(%173 = "cute.get_scalars"(%172) : (!cute.int_tuple<"?">) -> i32)), Int32(IntValue(%175 = "cute.get_scalars"(%174) : (!cute.int_tuple<"?">) -> i32)), 1)
+block_dim [256, 1, 1]
+gA !cute.memref<f32, gmem, align<16>, "(128,8,?):(?{div=5120},1,8)">
+gB !cute.memref<f32, gmem, align<16>, "(128,8,?):(?{div=5120},1,8)">
+gC !cute.memref<f32, gmem, align<16>, "(128,128):(?{div=4096},1)">
+Offset: gA !cute.memref<f32, gmem, align<16>, "(128,8,?):(?{div=5120},1,8)">
+gB !cute.memref<f32, gmem, align<16>, "(128,8,?):(?{div=5120},1,8)">
+gC !cute.memref<f32, gmem, align<16>, "(128,128):(?{div=4096},1)">
+sA !cute.memref<f32, smem, align<1024>, "(128,8,3):(1,132,1056)">
+sB !cute.memref<f32, smem, align<16>, "(128,8,3):(1,132,1056)">
+tAgA !cute.memref<f32, gmem, "((1,1),4,1,?):((0,0),?{div=163840},0,8)">
+tAsA !cute.memref<f32, smem, "((1,1),4,1,3):((0,0),32,0,1056)">
+tBgB !cute.memref<f32, gmem, "((1,1),4,1,?):((0,0),?{div=163840},0,8)">
+tBsB !cute.memref<f32, smem, "((1,1),4,1,3):((0,0),32,0,1056)">
+cA tensor<(?{div=128},?{div=8}) o (128,8,?):(1@0,1@1,8@1)>
+cB tensor<(?{div=128},?{div=8}) o (128,8,?):(1@0,1@1,8@1)>
+tAcA tensor<(?,?) o ((1,1),4,1,?):((0,0),32@0,0,8@1)>
+tBcB tensor<(?,?) o ((1,1),4,1,?):((0,0),32@0,0,8@1)>
+tApA tensor<ptr<i8, rmem, align<32>> o (1,4,1):(4,1,0)>
+tBpB tensor<ptr<i8, rmem, align<32>> o (1,4,1):(4,1,0)>
+tApA_residue_k tensor<ptr<i8, rmem, align<32>> o (1,4,1):(4,1,1)>
+tBpB_residue_k tensor<ptr<i8, rmem, align<32>> o (1,4,1):(4,1,1)>
+tCrA !cute.memref<f32, rmem, "(1,(4,2),8):(0,(1,4),8)">
+tCrB !cute.memref<f32, rmem, "(1,(4,2),8):(0,(1,4),8)">
+tCrC !cute.memref<f32, rmem, "(1,(4,2),(4,2)):(0,(1,4),(8,32))">
+tCsA !cute.memref<f32, smem, align<16>, "(1,(4,2),8,3):(0,(1,64),132,1056)">
+tCsB !cute.memref<f32, smem, align<16>, "(1,(4,2),8,3):(0,(1,64),132,1056)">
+tCgC !cute.memref<f32, gmem, align<16>, "(1,(4,2),(4,2)):(0,(?{div=4096},?{div=262144}),(1,64))">
+/home/pcash/tsong/cuda/tsong-cuda-notes/python/cute/sgemmref.py:622: UserWarning: This loop is no longer unrolled and may cause performance regression. Use `range(..., unroll_full=True)` for full unrolling, or switch to `range_constexpr` when bounds are compile-time constants.
+  for i in range(cute.size(tCrC.shape)):
+tCpC tensor<(?{div=4},?{div=4}) o (1,(4,2),(4,2)):(0,(1@0,64@0),(1@1,64@1))>
+predC tensor<ptr<i8, rmem, align<32>> o (1,(4,2),(4,2)):(0,(1,4),(8,32))>
+Compilation time: 0.3543 seconds
+Executing GEMM kernel...
+Verifying results...
+Results verified successfully!
+Kernel executio
