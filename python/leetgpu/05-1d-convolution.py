@@ -16,7 +16,6 @@ def convolution_1d_kernel(
     input: cute.Tensor,
     kernel: cute.Tensor,
     output: cute.Tensor,
-    input_crd: cute.Tensor,
     kernel_crd: cute.Tensor,
     output_crd: cute.Tensor,
     input_size: cutlass.Constexpr,
@@ -55,11 +54,11 @@ def convolution_1d_kernel(
         print(f"{LOG} input_tile_thr: {input_tile_thr}")
         print(f"{LOG} output_tile_thr: {output_tile_thr}")
 
+    # Make conv1d layout
     # Boundary check
-    input_crd_tile = input_crd[(None, bid_x)]
+    input_crd_tile_thr = cute.make_identity_tensor(input_tile_thr.shape)
     kernel_crd_tile = kernel_crd
     output_crd_tile = output_crd[(None, bid_x)]
-    input_crd_tile_thr = cute.local_partition(input_crd_tile, thr_layout, tid_x)
     kernel_crd_tile_thr = cute.local_partition(kernel_crd_tile, thr_layout, tid_x)
     output_crd_tile_thr = cute.local_partition(output_crd_tile, thr_layout, tid_x)
 
@@ -67,8 +66,15 @@ def convolution_1d_kernel(
     kernel_crd_pred = cute.make_fragment_like(kernel_crd_tile_thr, cutlass.Boolean)
     output_crd_pred = cute.make_fragment_like(output_crd_tile_thr, cutlass.Boolean)
 
+    if VERBOSE:
+        print(f"{LOG} input_crd_tile_thr: {input_crd_tile_thr}")
+        print(f"{LOG} kernel_crd_tile_thr: {kernel_crd_tile_thr}")
+        print(f"{LOG} output_crd_tile_thr: {output_crd_tile_thr}")
+
     for i in cutlass.range(cute.size(input_crd_pred), unroll=1):
-        input_crd_pred[i] = cute.elem_less(input_crd_tile_thr[i], (input_size,))
+        input_crd_pred[i] = cute.elem_less(
+            (input_crd_tile_thr[i][0] * cta_tiler[0],), (input_size,)
+        )
     for i in cutlass.range(cute.size(kernel_crd_pred), unroll=1):
         kernel_crd_pred[i] = cute.elem_less(kernel_crd_tile_thr[i], (kernel_size,))
     for i in cutlass.range(cute.size(output_crd_pred), unroll=1):
@@ -94,15 +100,16 @@ def solve(
     input_size: cutlass.Constexpr,
     kernel_size: cutlass.Constexpr,
 ):
+    out_size = input_size - kernel_size + 1
     output = cute.flat_divide(output, cta_tiler)
     input_layout = cute.make_layout(
         (output.shape[0] + kernel_size - 1, output.shape[1]), stride=(1, output.shape[0])
     )
     input = cute.make_tensor(input.iterator, layout=input_layout)
 
-    input_crd = cute.make_identity_tensor(input.shape)
-    input_crd = cute.make_tensor(input_crd.iterator, layout=input_layout)
-    output_crd = cute.make_identity_tensor(output.shape)
+    conv_layout = cute.make_layout((kernel_size,))
+
+    output_crd = cute.make_identity_tensor((out_size,))
     output_crd = cute.flat_divide(output_crd, cta_tiler)
     kernel_crd = cute.make_identity_tensor(kernel.shape)
 
@@ -111,12 +118,14 @@ def solve(
         print(f"{LOG} kernel: {kernel}")
         print(f"{LOG} output: {output}")
         print(f"{LOG} cta_tiler: {cta_tiler}")
+        print(f"{LOG} output_crd: {output_crd}")
+        print(f"{LOG} kernel_crd: {kernel_crd}")
 
     grid_size = [output.shape[1], 1, 1]
     block_size = [cta_tiler[0], 1, 1]
 
     convolution_1d_kernel(
-        input, kernel, output, input_crd, kernel_crd, output_crd, input_size, kernel_size
+        input, kernel, output, kernel_crd, output_crd, input_size, kernel_size
     ).launch(grid=grid_size, block=block_size)
 
 
