@@ -126,9 +126,9 @@ def sgemm_kernel(
     # * tAsA (copies, copy_m, copy_k, num_stages)
     # * tBgB (copies, copy_n, copy_k, num_tiles_k)
     # * tBsB (copies, copy_n, copy_k, num_stages)
-    # residue_k = A.shape[1] - cutlass.Int32(cta_tiler[2]) * gA.shape[2]
-    # gA = cute.domain_offset((0, residue_k, 0), gA)
-    # gB = cute.domain_offset((0, residue_k, 0), gB)
+    residue_k = A.shape[1] - cutlass.Int32(cta_tiler[2]) * gA.shape[2]
+    gA = cute.domain_offset((0, residue_k, 0), gA)
+    gB = cute.domain_offset((0, residue_k, 0), gB)
 
     # Get the thread-level tiles
     smem = cutlass.utils.SmemAllocator()
@@ -166,8 +166,8 @@ def sgemm_kernel(
     crdB = cute.make_identity_tensor(B.shape)
     crdA = cute.local_tile(crdA, cta_tiler, tiler_coord, proj=(1, None, 1))
     crdB = cute.local_tile(crdB, cta_tiler, tiler_coord, proj=(None, 1, 1))
-    # crdA = cute.domain_offset((0, residue_k, 0), crdA)
-    # crdB = cute.domain_offset((0, residue_k, 0), crdB)
+    crdA = cute.domain_offset((0, residue_k, 0), crdA)
+    crdB = cute.domain_offset((0, residue_k, 0), crdB)
     tAcrdA = thr_copy_a.partition_S(crdA)
     tBcrdB = thr_copy_b.partition_S(crdB)
 
@@ -195,7 +195,7 @@ def sgemm_kernel(
         ),
         cutlass.Boolean,
     )
-    tAprdA_res_k = cute.make_fragment_like(
+    tAprdA_res_k = cute.make_fragment(
         cute.make_layout(
             shape=(tAsA.shape[0][1], cute.size(tAsA, mode=[1]), cute.size(tAsA, mode=[2])),
             stride=(
@@ -206,7 +206,7 @@ def sgemm_kernel(
         ),
         cutlass.Boolean,
     )
-    tBprdB_res_k = cute.make_fragment_like(
+    tBprdB_res_k = cute.make_fragment(
         cute.make_layout(
             shape=(tBsB.shape[0][1], cute.size(tBsB, mode=[1]), cute.size(tBsB, mode=[2])),
             stride=(
@@ -286,11 +286,11 @@ def sgemm_kernel(
                 tBsB[None, None, None, pipe],
                 pred=tBprdB,
             )
-            cute.arch.cp_async_commit_group()
+        cute.arch.cp_async_commit_group()
 
-            gmem_pipe_read += 1
-            if gmem_pipe_read >= num_tiles_k:
-                gmem_pipe_read = cutlass.Int32(0)
+        gmem_pipe_read += 1
+        if gmem_pipe_read >= num_tiles_k:
+            gmem_pipe_read = cutlass.Int32(0)
 
     # If num_tiles_k is less than the smem depth,
     # clean the predicate tensor
@@ -672,8 +672,8 @@ if __name__ == "__main__":
         description="example of elementwise ops to demonstrate the numpy/pytorch as input for kernels"
     )
     parser.add_argument("--M", "-M", default=4096, type=int)
-    parser.add_argument("--N", "-N", default=4096, type=int)
-    parser.add_argument("--K", "-K", default=4096, type=int)
+    parser.add_argument("--N", "-N", default=2048, type=int)
+    parser.add_argument("--K", "-K", default=1024, type=int)
     parser.add_argument("--warmup-iterations", default=10, type=int)
     parser.add_argument("--iterations", default=100, type=int)
     parser.add_argument("--blas", type=str, default="tn", choices=["tn", "tt", "nn", "nt"])
