@@ -35,14 +35,9 @@ from cutlass.cutlass_dsl import T
 VERBOSE = False
 LOG = "[CuTe Info][LeetGPU]"
 
-threads = 256
-num_sms = 108  # for A100
+threads = 128
+cta_tiler = (1024,)
 vl = 128 // cute.Float32.width
-
-
-@dsl_user_op
-def count_eq(a: cute.Int32, k: cute.Int32, *, loc=None, ip=None):
-    return cute.Int32(a == k)
 
 
 @dsl_user_op
@@ -61,37 +56,16 @@ def warp_reduce_kernel(
     return val
 
 
-# https://docs.nvidia.com/cuda/parallel-thread-execution/index.html?highlight=atom#parallel-synchronization-and-communication-instructions-atom
-@dsl_user_op
-def ptx_atomic_add(gmem_addr: cute.Int64, rmem_val: cute.Float32, *, loc=None, ip=None):
-    llvm.inline_asm(
-        None,
-        [
-            cute.Int64(gmem_addr).ir_value(),
-            cute.Float32(rmem_val).ir_value(),
-        ],
-        """{\n\t
-        .reg .u64 ga;\n\t
-        .reg .s32 sum;\n\t
-        cvta.to.global.u64 	ga, $1;\n\t
-        atom.global.add.s32 sum, [ga], $2;\n\t
-        }""",
-        "l,r",
-        has_side_effects=False,
-        is_align_stack=False,
-        asm_dialect=llvm.AsmDialect.AD_ATT,
-    )
-
-
 @dsl_user_op
 def atomic_add_f32(a: cute.Float32, gmem_ptr: cute.Pointer, *, loc=None, ip=None):
     nvvm.atomicrmw(res=T.f32(), op=nvvm.AtomicOpKind.FADD, ptr=gmem_ptr.llvm_ptr, a=a.ir_value())
 
 
 @cute.kernel
-def count_array_element_kernel(
+def reduction_kernel(
     input: cute.Tensor,
     output: cute.Tensor,
+    crd: cute.Tensor,
     tiled_copy: cute.TiledCopy,
     N: cute.Int32,
 ):
@@ -100,45 +74,37 @@ def count_array_element_kernel(
     wrp_idx = cute.arch.warp_idx()
     lne_idx = cute.arch.lane_idx()
 
-    num_blocks = input.shape[1]
-    Nb = cute.ceil_div(num_blocks, num_sms)
-
     # Allocate reduce buffer
     warp_size = cute.arch.WARP_SIZE
     num_warps = cute.ceil_div(threads, warp_size)
     reduce_buffer = cutlass.utils.SmemAllocator().allocate_tensor(
-        cute.Float32, cute.make_layout((num_warps,))
+        input.element_type, cute.make_layout((num_warps,))
     )
 
-    input_frag_thr = cute.make_fragment((vl,), input.element_type)
-    pred_frag_thr = cute.make_fragment((vl,), cute.Boolean)
+    input_tile = input[(None, blk_idx)]
+    crd_tile = crd[(None, blk_idx)]
+    thr_copy_input = tiled_copy.get_slice(thr_idx)
+    input_thr = thr_copy_input.partition_S(input_tile)
+    crd_thr = thr_copy_input.partition_S(crd_tile)
 
-    # Run over multiple blocks
+    input_frag_thr = cute.make_fragment_like(input_thr)
+    pred_frag_thr = cute.make_fragment_like(crd_thr, cute.Boolean)
+    input_frag_thr.fill(0)
+
+    if VERBOSE:
+        print(f"{LOG} input_tile", input_tile)
+        print(f"{LOG} input_thr", input_thr)
+        print(f"{LOG} input_frag_thr", input_frag_thr)
+
+    for i in cutlass.range_constexpr(cute.cosize(pred_frag_thr)):
+        pred_frag_thr[i] = cute.elem_less(crd_thr[i], (N,))
+
+    cute.copy(tiled_copy, input_thr, input_frag_thr, pred=pred_frag_thr)
+
+    # local reduction
     val_thr = cute.Float32(0)
-    for b in cutlass.range(Nb):
-        blk_idx_eff = blk_idx + b * num_sms
-        if blk_idx_eff < num_blocks:
-            input_tile = input[(None, blk_idx_eff)]
-
-            thr_copy_input = tiled_copy.get_slice(thr_idx)
-            input_thr = thr_copy_input.partition_S(input_tile)
-
-            if VERBOSE:
-                print(f"{LOG} input_tile", input_tile)
-                print(f"{LOG} input_thr", input_thr)
-                print(f"{LOG} input_frag_thr", input_frag_thr)
-
-            # Boundary check
-            thr_offset = thr_idx * vl + blk_idx_eff * threads * vl
-            for i in cutlass.range_constexpr(vl):
-                pred_frag_thr[i] = cute.elem_less(i + thr_offset, N)
-
-            input_frag_thr.fill(0)
-            cute.copy(tiled_copy, input_thr[(None, 0)], input_frag_thr, pred=pred_frag_thr)
-
-            # local reduction
-            frag = input_frag_thr.load()
-            val_thr += frag.reduce(cute.ReductionOp.ADD, init_val=0.0, reduction_profile=0)
+    thr_ssa = input_frag_thr.load()
+    val_thr += thr_ssa.reduce(cute.ReductionOp.ADD, init_val=0.0, reduction_profile=0)
 
     # warp reduction
     cute.arch.sync_warp()
@@ -166,15 +132,16 @@ def count_array_element_kernel(
 def solve(input: cute.Tensor, output: cute.Tensor, N: cute.Int32):
     # SM80 War. We use 128 threads per block, each thread loads 4 elements (vl=4)
     # The second call should handle less than 512 values.
-    elems_per_block = threads * vl
+    elems_per_block = cta_tiler[0]
     # num_blocks = cute.ceil_div(N, elems_per_block)
     # num_sms = cutlass.utils.HardwareInfo().get_device_multiprocessor_count()
-    assert num_sms <= elems_per_block
+    crd = cute.make_identity_tensor(input.shape)
 
     thr_layout = cute.make_layout((threads,))
     val_layout = cute.make_layout((vl,))
 
-    input = cute.flat_divide(input, (elems_per_block,))  # (4096, res_n)
+    input_tiled = cute.flat_divide(input, cta_tiler)
+    crd_tiled = cute.flat_divide(crd, cta_tiler)
 
     copy_atom = cute.make_copy_atom(cute.nvgpu.CopyUniversalOp(), input.element_type)
     tiled_copy = cute.make_tiled_copy_tv(copy_atom, thr_layout, val_layout)
@@ -184,13 +151,13 @@ def solve(input: cute.Tensor, output: cute.Tensor, N: cute.Int32):
         print(f"{LOG} thr_layout: {thr_layout}")
         print(f"{LOG} val_layout: {val_layout}")
 
-    grid_size = [num_sms, 1, 1]
+    grid_size = [input_tiled.shape[1], 1, 1]
     block_size = [threads, 1, 1]
 
     if VERBOSE:
         print(f"{LOG} grid_size: {grid_size}, block_size: {block_size}")
 
-    count_array_element_kernel(input, output, tiled_copy, N).launch(
+    reduction_kernel(input_tiled, output, crd_tiled, tiled_copy, N).launch(
         grid=grid_size, block=block_size
     )
     cuda.runtime.cudaDeviceSynchronize()
@@ -199,7 +166,7 @@ def solve(input: cute.Tensor, output: cute.Tensor, N: cute.Int32):
 def test():
     n = 50000000
     input = torch.empty(n, dtype=torch.float32, device='cuda').uniform_(-10, 10)
-    output = torch.empty(1, dtype=torch.float32, device='cuda')
+    output = torch.zeros(1, dtype=torch.float32, device='cuda')
 
     input_tensor = cute.runtime.from_dlpack(input)
     output_tensor = cute.runtime.from_dlpack(output)

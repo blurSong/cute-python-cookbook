@@ -112,7 +112,7 @@ def count_2d_array_element_kernel(
     warp_size = cute.arch.WARP_SIZE
     num_warps = cute.ceil_div(threads, warp_size)
     reduce_buffer = cutlass.utils.SmemAllocator().allocate_tensor(
-        cute.Int32, cute.make_layout((num_warps,))
+        input.element_type, cute.make_layout((num_warps,))
     )
 
     # Run over multiple blocks
@@ -125,7 +125,7 @@ def count_2d_array_element_kernel(
     crd_thr = thr_copy_input.partition_S(crd_tile)
 
     input_frag_thr = cute.make_fragment_like(input_thr)
-    pred_frag_thr = cute.make_fragment_like(input_thr, cute.Boolean)
+    pred_frag_thr = cute.make_fragment_like(crd_thr, cute.Boolean)
     input_frag_thr.fill(0)
 
     if VERBOSE:

@@ -35,8 +35,8 @@ from cutlass.cutlass_dsl import T
 VERBOSE = False
 LOG = "[CuTe Info][LeetGPU]"
 
-threads = 256
-num_sms = 108  # for A100
+threads = 128
+cta_tiler = (512,)
 vl = 128 // cute.Float32.width
 
 
@@ -92,6 +92,7 @@ def atomic_add_i32(a: cute.Int32, gmem_ptr: cute.Pointer, *, loc=None, ip=None):
 def count_array_element_kernel(
     input: cute.Tensor,
     output: cute.Tensor,
+    crd: cute.Tensor,
     tiled_copy: cute.TiledCopy,
     N: cute.Int32,
     K: cute.Int32,
@@ -101,9 +102,6 @@ def count_array_element_kernel(
     wrp_idx = cute.arch.warp_idx()
     lne_idx = cute.arch.lane_idx()
 
-    num_blocks = input.shape[1]
-    Nb = cute.ceil_div(num_blocks, num_sms)
-
     # Allocate reduce buffer
     warp_size = cute.arch.WARP_SIZE
     num_warps = cute.ceil_div(threads, warp_size)
@@ -111,35 +109,30 @@ def count_array_element_kernel(
         input.element_type, cute.make_layout((num_warps,))
     )
 
-    input_frag_thr = cute.make_fragment((vl,), input.element_type)
-    pred_frag_thr = cute.make_fragment((vl,), cute.Boolean)
+    input_tile = input[(None, blk_idx)]
+    crd_tile = crd[(None, blk_idx)]
+    thr_copy_input = tiled_copy.get_slice(thr_idx)
+    input_thr = thr_copy_input.partition_S(input_tile)
+    crd_thr = thr_copy_input.partition_S(crd_tile)
 
-    # Run over multiple blocks
+    input_frag_thr = cute.make_fragment_like(input_thr)
+    pred_frag_thr = cute.make_fragment_like(crd_thr, cute.Boolean)
+    input_frag_thr.fill(0)
+
+    if VERBOSE:
+        print(f"{LOG} input_tile", input_tile)
+        print(f"{LOG} input_thr", input_thr)
+        print(f"{LOG} input_frag_thr", input_frag_thr)
+
+    for i in cutlass.range_constexpr(cute.cosize(pred_frag_thr)):
+        pred_frag_thr[i] = cute.elem_less(crd_thr[i], (N,))
+
+    cute.copy(tiled_copy, input_thr, input_frag_thr, pred=pred_frag_thr)
+
+    # local reduction
     val_thr = cute.Int32(0)
-    for b in cutlass.range(Nb):
-        blk_idx_eff = blk_idx + b * num_sms
-        if blk_idx_eff < num_blocks:
-            input_tile = input[(None, blk_idx_eff)]
-
-            thr_copy_input = tiled_copy.get_slice(thr_idx)
-            input_thr = thr_copy_input.partition_S(input_tile)
-
-            if VERBOSE:
-                print(f"{LOG} input_tile", input_tile)
-                print(f"{LOG} input_thr", input_thr)
-                print(f"{LOG} input_frag_thr", input_frag_thr)
-
-            # Boundary check
-            thr_offset = thr_idx * vl + blk_idx_eff * threads * vl
-            for i in cutlass.range_constexpr(vl):
-                pred_frag_thr[i] = cute.elem_less(i + thr_offset, N)
-
-            cute.copy(tiled_copy, input_thr[(None, 0)], input_frag_thr, pred=pred_frag_thr)
-
-            # local reduction
-            for i in cutlass.range_constexpr(vl):
-                if pred_frag_thr[i]:
-                    val_thr += count_eq(input_frag_thr[i], K)
+    for i in cutlass.range_constexpr(cute.cosize(input_frag_thr)):
+        val_thr += count_eq(input_frag_thr[i], K)
 
     # warp reduction
     cute.arch.sync_warp()
@@ -167,15 +160,16 @@ def count_array_element_kernel(
 def solve(input: cute.Tensor, output: cute.Tensor, N: cute.Int32, K: cute.Int32):
     # SM80 War. We use 128 threads per block, each thread loads 4 elements (vl=4)
     # The second call should handle less than 512 values.
-    elems_per_block = threads * vl
+    elems_per_block = cta_tiler[0]
     # num_blocks = cute.ceil_div(N, elems_per_block)
     # num_sms = cutlass.utils.HardwareInfo().get_device_multiprocessor_count()
-    assert num_sms <= elems_per_block
+    crd = cute.make_identity_tensor(input.shape)
 
     thr_layout = cute.make_layout((threads,))
     val_layout = cute.make_layout((vl,))
 
-    input = cute.flat_divide(input, (elems_per_block,))  # (4096, res_n)
+    input_tiled = cute.flat_divide(input, cta_tiler)
+    crd_tiled = cute.flat_divide(crd, cta_tiler)
 
     copy_atom = cute.make_copy_atom(cute.nvgpu.CopyUniversalOp(), input.element_type)
     tiled_copy = cute.make_tiled_copy_tv(copy_atom, thr_layout, val_layout)
@@ -185,13 +179,13 @@ def solve(input: cute.Tensor, output: cute.Tensor, N: cute.Int32, K: cute.Int32)
         print(f"{LOG} thr_layout: {thr_layout}")
         print(f"{LOG} val_layout: {val_layout}")
 
-    grid_size = [num_sms, 1, 1]
+    grid_size = [input_tiled.shape[1], 1, 1]
     block_size = [threads, 1, 1]
 
     if VERBOSE:
         print(f"{LOG} grid_size: {grid_size}, block_size: {block_size}")
 
-    count_array_element_kernel(input, output, tiled_copy, N, K).launch(
+    count_array_element_kernel(input_tiled, output, crd_tiled, tiled_copy, N, K).launch(
         grid=grid_size, block=block_size
     )
     cuda.runtime.cudaDeviceSynchronize()
@@ -201,7 +195,7 @@ def test():
     n = 100000000
     k = 501010
     input = torch.randint(1, 100001, (n,), dtype=torch.int32, device='cuda')
-    output = torch.empty(1, dtype=torch.int32, device='cuda')
+    output = torch.zeros(1, dtype=torch.int32, device='cuda')
 
     input_tensor = cute.runtime.from_dlpack(input)
     output_tensor = cute.runtime.from_dlpack(output)
