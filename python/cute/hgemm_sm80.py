@@ -459,16 +459,16 @@ def hgemm_kernel(
         # Fetching next k-tile GMEM->SMEM
         # - Note that current SMEM state is
         #   [F][O][O][E] F(FETCHED), O(ON-FLY), E(EMPTY)
-        #   And the initialized smem_pipe_r/w index are 0 and -1.
-        # - Firstly the [E] smem tile will be fetched.
+        # - The initialized smem_pipe_r/w index are 0 and num_stages-1.
+        #   Firstly the [E] smem tile will be fetched.
         if k_tile_index + num_stages - 1 < num_k_tiles:
-            coord_gmem = (None, None, None, k_tile_index)
+            coord_gmem = (None, None, None, k_tile_index_gmem)
             coord_smem = (None, None, None, smem_pipe_write)
             cute.copy(tiled_copy_A, tAgA[coord_gmem], tAsA[coord_smem], pred=tAprdA)
             cute.copy(tiled_copy_B, tBgB[coord_gmem], tBsB[coord_smem], pred=tBprdB)
             cute.arch.cp_async_commit_group()
             # Update meta pointers of gmem/smem pipes
-            k_tile_index += 1
+            k_tile_index_gmem += 1
             smem_pipe_write = smem_pipe_read
             smem_pipe_read = (smem_pipe_read + 1) % num_stages
         for k_frag_index in cutlass.range(num_k_frags, unroll_full=True):
