@@ -1,8 +1,8 @@
 """
 A dense FP32 SIMT GEMM using CUTE DSL.
 
-The SGEMM implementation handles only row-major or col-major layouts.
-To bridge the gap of GEMM order between BLAS and CUTE, we can use the following layouts.
+The SGEMM implementation handles both row-major and col-major layouts.
+To bridge the gap of GEMM order between BLAS and CUTE, we can use the following definitions:
 ------------------------------------------
 Blas      T                   N
 ------------------------------------------
@@ -62,11 +62,11 @@ import cuda.bindings.driver as cuda
 
 import cutlass
 import cutlass.cute as cute
-import cutlass.utils as utils
 import cutlass.cute.testing as testing
 import cutlass.torch as cutlass_torch
 from cutlass.cute.runtime import from_dlpack
 
+from utils import check_cuda
 
 VERBOSE = False
 LOG = "[CuTe Info]"
@@ -74,10 +74,6 @@ LOG = "[CuTe Info]"
 num_stages = 3
 cta_tiler: Tuple[int, int, int] = (128, 128, 8)
 mma_tiler: Tuple[int, int] = (16, 16)
-
-
-def check_cuda():
-    assert torch.cuda.is_available(), "NO CUDA device detected."
 
 
 @cute.kernel
@@ -452,14 +448,14 @@ def sgemm(
 
     # For GEMM TN, A is LayoutEnum.ROW_MAJOR, B is LayoutEnum.COL_MAJOR
     # For GEMM TT, A is LayoutEnum.ROW_MAJOR, B is LayoutEnum.ROW_MAJOR
-    a_major_mode = utils.LayoutEnum.from_tensor(a)
-    b_major_mode = utils.LayoutEnum.from_tensor(b)
+    a_major_mode = cutlass.utils.LayoutEnum.from_tensor(a)
+    b_major_mode = cutlass.utils.LayoutEnum.from_tensor(b)
 
     # Create layouts for shared memory for A and B
     # use padding to avoid bank conflict when ldg then sts.
     # TODO Why 4?
-    padding_a = 4 if a_major_mode == utils.LayoutEnum.ROW_MAJOR else 0
-    padding_b = 4 if b_major_mode == utils.LayoutEnum.ROW_MAJOR else 0
+    padding_a = 4 if a_major_mode == cutlass.utils.LayoutEnum.ROW_MAJOR else 0
+    padding_b = 4 if b_major_mode == cutlass.utils.LayoutEnum.ROW_MAJOR else 0
     smem_layout_a = cute.make_layout(
         (tile_m, tile_k, num_stages), stride=(1, tile_m + padding_a, tile_k * (tile_m + padding_a))
     )
@@ -480,7 +476,8 @@ def sgemm(
     vl_elems = copy_bits // 32
 
     if cutlass.const_expr(
-        a_major_mode == utils.LayoutEnum.COL_MAJOR and a.layout.max_alignment % vl_bytes == 0
+        a_major_mode == cutlass.utils.LayoutEnum.COL_MAJOR
+        and a.layout.max_alignment % vl_bytes == 0
     ):
         thr_layout_a = cute.make_ordered_layout(
             (tile_m // vl_elems, threads * vl_elems // tile_m), order=(0, 1)
@@ -501,7 +498,8 @@ def sgemm(
         )
 
     if cutlass.const_expr(
-        b_major_mode == utils.LayoutEnum.COL_MAJOR and b.layout.max_alignment % vl_bytes == 0
+        b_major_mode == cutlass.utils.LayoutEnum.COL_MAJOR
+        and b.layout.max_alignment % vl_bytes == 0
     ):
         thr_layout_b = cute.make_ordered_layout(
             (tile_n // vl_elems, threads * vl_elems // tile_n), order=(0, 1)
@@ -579,7 +577,7 @@ def run_sgemm(
     warmup_iterations: int = 10,
     iterations: int = 100,
 ):
-    print("Running sgemm with M={}, N={}, K={}, BLAS T{}.".format(M, N, K, blas.upper()))
+    print("Running sgemm with M={}, N={}, K={}, BLAS {}.".format(M, N, K, blas.upper()))
 
     ta, tb = blas
     torch_stream = torch.cuda.current_stream()
