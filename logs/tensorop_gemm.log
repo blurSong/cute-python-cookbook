@@ -1,0 +1,66 @@
+$ python tensorop_gemm.py --a_major k --b_major k --mnkl 128,512,1024,1
+A dtype: Float16, B dtype: Float16, C dtype: Float16, Acc dtype: Float32
+[CUTLASS] A tensor<ptr<f16, gmem, align<16>> o (128,1024,1):(1024,1,1)>
+[CUTLASS] B tensor<ptr<f16, gmem, align<16>> o (512,1024,1):(1024,1,1)>
+[CUTLASS] C tensor<ptr<f16, gmem, align<16>> o (128,512,1):(512,1,1)>
+[CUTLASS] grid_dim (1, 4, 1)
+[CUTLASS] rasterized grid_dim (Int32(?), Int32(?), 1)
+[CUTLASS] block_dim (128, 1, 1)
+[CUTLASS] smem_layout_A S<2,3,3> o 0 o ((8,16),(32,1),(1,3)):((32,256),(1,0),(0,4096))
+[CUTLASS] smem_layout_B S<2,3,3> o 0 o ((8,16),(32,1),(1,3)):((32,256),(1,0),(0,4096))
+[CUTLASS] smem_layout_C S<3,3,4> o 0 o ((8,16),(128,1)):((128,1024),(1,0))
+[CUTLASS] tiled_copy_A Tiled Copy
+  Tiler MN:        (32:1,32:1)
+  TV Layout tiled: ((4,32),8):((256,1),32)
+Copy Atom
+  ThrID:           1:0
+  TV Layout Src:   (1,8):(0,1)
+  TV Layout Dst:   (1,8):(0,1)
+  Value type:      f16
+[CUTLASS] tiled_copy_B Tiled Copy
+  Tiler MN:        (32:1,32:1)
+  TV Layout tiled: ((4,32),8):((256,1),32)
+Copy Atom
+  ThrID:           1:0
+  TV Layout Src:   (1,8):(0,1)
+  TV Layout Dst:   (1,8):(0,1)
+  Value type:      f16
+[CUTLASS] tiled_copy_C Tiled Copy
+  Tiler MN:        (8:1,128:1)
+  TV Layout tiled: ((16,8),8):((64,1),8)
+Copy Atom
+  ThrID:           1:0
+  TV Layout Src:   (1,8):(0,1)
+  TV Layout Dst:   (1,8):(0,1)
+  Value type:      f16
+[CUTLASS] tiled_mma Tiled MMA
+  Thr Layout VMNK: (32,2,2,1):(1,32,64,0)
+  Permutation MNK: (32:1,32:1,16:1)
+MMA Atom
+  ThrID:           32:1
+  Shape MNK:       (16,8,16)
+  TV Layout A:     ((4,8),(2,2,2)):((32,1),(16,8,128))
+  TV Layout B:     ((4,8),(2,2)):((16,1),(8,64))
+  TV Layout C:     ((4,8),(2,2)):((32,1),(16,8))
+[CUTLASS] gA tensor<ptr<f16, gmem, align<16>> o (128,32,32):(1024,1,32)>
+[CUTLASS] gB tensor<ptr<f16, gmem, align<16>> o (128,32,32):(1024,1,32)>
+[CUTLASS] gC tensor<ptr<f16, gmem> o (128,128):(512,1)>
+[CUTLASS] sA tensor<ptr<f16, smem, align<1024>> o S<2,3,3> o 0 o ((8,16),(32,1),(1,3)):((32,256),(1,0),(0,4096))>
+[CUTLASS] sB tensor<ptr<f16, smem, align<1024>> o S<2,3,3> o 0 o ((8,16),(32,1),(1,3)):((32,256),(1,0),(0,4096))>
+[CUTLASS] sC tensor<ptr<f16, smem, align<1024>> o S<3,3,4> o 0 o ((8,16),(128,1)):((128,1024),(1,0))>
+[CUTLASS] tAgA tensor<ptr<f16, gmem, align<16>> o ((8,1),4,1,32):((1,0),32768,0,32)>
+[CUTLASS] tAsA tensor<ptr<f16, smem, align<16>> o ((8,1),4,1,(1,3)):((1,0),1024,0,(0,4096))>
+[CUTLASS] tBgB tensor<ptr<f16, gmem, align<16>> o ((8,1),4,1,32):((1,0),32768,0,32)>
+[CUTLASS] tBsB tensor<ptr<f16, smem, align<16>> o ((8,1),4,1,(1,3)):((1,0),1024,0,(0,4096))>
+[CUTLASS] tCgC tensor<ptr<f16, gmem> o ((8,1),16,1):((1,0),4096,0)>
+[CUTLASS] tCsC epilogue tensor<ptr<f16, smem, align<16>> o ((8,1),16,1):((1,0),1024,0)>
+[CUTLASS] tCsA tensor<ptr<f16, smem, align<4>> o ((2,2,2),4,2,(1,3)):((1,256,?{div=8}),1024,?{div=16},(0,4096))>
+[CUTLASS] tCsB tensor<ptr<f16, smem, align<4>> o ((2,2),8,2,(1,3)):((1,?{div=8}),512,?{div=16},(0,4096))>
+[CUTLASS] tCsC mma tensor<ptr<f16, smem, align<4>> o ((2,2),4,(2,2,2)):((1,1024),4096,(?{div=16},?{div=32},64))>
+[CUTLASS] tCrA tensor<ptr<f16, rmem, align<16>> o ((2,2,2),4,2):((1,2,4),8,32)>
+[CUTLASS] tCrB tensor<ptr<f16, rmem, align<8>> o ((2,2),8,2):((1,2),4,32)>
+[CUTLASS] tCrC tensor<ptr<f32, rmem, align<16>> o ((2,2),4,8):((1,2),4,16)>
+[CUTLASS] tCsA copy_view tensor<ptr<f16, smem, align<16>> o ((8,1),4,2,(1,3)):((1,0),1024,?{div=16},(0,4096))>
+[CUTLASS] tCsB copy_view tensor<ptr<f16, smem, align<16>> o ((8,1),4,2,(1,3)):((1,0),1024,?{div=16},(0,4096))>
+[CUTLASS] tCrA copy_view tensor<ptr<f16, rmem, align<16>> o ((8,1),4,2):((1,0),8,32)>
+[CUTLASS] tCrB copy_view tensor<ptr<f16, rmem, align<8>> o ((8,1),4,2):((1,0),8,32)>

@@ -254,9 +254,9 @@ def hgemm_kernel(
     tBgB = thr_copy_B.partition_S(gB)
     tBsB = thr_copy_B.partition_D(sB)
     # - Note that the S/D of C is different
-    # - Note that the tCsC_epilogue is the tiled_copy view of smem C and
+    # - Note that the _epilogue is the tiled_copy view of smem C and
     #   used in the epilogue SMEM->GMEM.
-    tCgC = thr_copy_C.partition_D(gC)
+    tCgC_epilogue = thr_copy_C.partition_D(gC)
     tCsC_epilogue = thr_copy_C.partition_S(sC)
 
     tAcrdA = thr_copy_A.partition_S(crdA)
@@ -274,7 +274,7 @@ def hgemm_kernel(
         print(f"{LOG} tAsA {tAsA}")
         print(f"{LOG} tBgB {tBgB}")
         print(f"{LOG} tBsB {tBsB}")
-        print(f"{LOG} tCgC {tCgC}")
+        print(f"{LOG} tCgC epilogue {tCgC_epilogue}")
         print(f"{LOG} tCsC epilogue {tCsC_epilogue}")
 
     # Making predicators of A, B and C
@@ -302,7 +302,7 @@ def hgemm_kernel(
     )
     tCprdC = cute.make_rmem_tensor(
         cute.make_ordered_layout(
-            (tCsC_epilogue.shape[0][1], tCsC_epilogue.shape[1], tCsC_epilogue.shape[2]),
+            (tCgC_epilogue.shape[0][1], tCgC_epilogue.shape[1], tCgC_epilogue.shape[2]),
             order=(2, 1, 0),
         ),
         dtype=cutlass.Boolean,
@@ -372,16 +372,17 @@ def hgemm_kernel(
     tCsA = thr_mma.partition_A(sA)
     tCsB = thr_mma.partition_B(sB)
     tCsC_mma = thr_mma.partition_C(sC)
+    tCgC_mma = thr_mma.partition_C(gC)
     tCrA = thr_mma.make_fragment_A(tCsA[None, None, None, 0])
     tCrB = thr_mma.make_fragment_B(tCsB[None, None, None, 0])
-    tCrC = thr_mma.make_fragment_C(tCsC_mma)
+    tCrC = thr_mma.make_fragment_C(tCgC_mma)
     tCrC.fill(0.0)
 
     # Copy Atom A/B retiling
     # Creating the ldmatrix copy atom with {.trans} {.num}
     ldmatrix = cute.nvgpu.warp.LdMatrix8x8x16bOp
-    trans_A = LayoutEnum.from_tensor(A) == LayoutEnum.ROW_MAJOR
-    trans_B = LayoutEnum.from_tensor(B) == LayoutEnum.ROW_MAJOR
+    trans_A = LayoutEnum.from_tensor(A) != LayoutEnum.ROW_MAJOR
+    trans_B = LayoutEnum.from_tensor(B) != LayoutEnum.ROW_MAJOR
     copy_atom_s2r_A = cute.make_copy_atom(ldmatrix(trans_A, 4), gemm_dtype)
     copy_atom_s2r_B = cute.make_copy_atom(ldmatrix(trans_B, 4), gemm_dtype)
 
@@ -404,6 +405,7 @@ def hgemm_kernel(
         print(f"{LOG} tCsA {tCsA}")
         print(f"{LOG} tCsB {tCsB}")
         print(f"{LOG} tCsC mma {tCsC_mma}")
+        print(f"{LOG} tCgC mma {tCgC_mma}")
         print(f"{LOG} tCrA {tCrA}")
         print(f"{LOG} tCrB {tCrB}")
         print(f"{LOG} tCrC {tCrC}")
@@ -505,7 +507,7 @@ def hgemm_kernel(
     cute.autovec_copy(tCsC_epilogue, tCrC_epilogue)
 
     # RMEM->GMEM C
-    cute.copy(tiled_copy_C, tCrC_epilogue, tCgC, pred=tCprdC)
+    cute.copy(tiled_copy_C, tCrC_epilogue, tCgC_epilogue, pred=tCprdC)
 
     return
 
@@ -547,7 +549,7 @@ def hgemm(
     copy_atom_sync = cute.make_copy_atom(
         cute.nvgpu.CopyUniversalOp(),
         gemm_dtype,
-        num_bits_per_copy=copy_bits,
+        # num_bits_per_copy=copy_bits,
     )
     tiled_copy_A = make_tiled_copy_ABC(copy_atom_async, major_mode_A, (tile_m, tile_k))
     tiled_copy_B = make_tiled_copy_ABC(copy_atom_async, major_mode_B, (tile_n, tile_k))
@@ -693,7 +695,7 @@ def run_hgemm(
     workspace_count = testing.get_workspace_count(workspace_bytes, warmup_iterations, iterations)
 
     def torch_workspace_generator():
-        return ["mkl,nkl->mnl", *tensor_generator("torch_only")]
+        return ["mkl,nkl->mnl", *tensor_generator("torch_only")[:2]]
 
     def cute_workspace_generator():
         return testing.JitArguments(*tensor_generator("cute_only"))
@@ -717,18 +719,18 @@ def run_hgemm(
 
     GEMM_TOPS = 2 * M * N * K * L / 1e12
     print(f"Torch kernel execution time: {torch_avg_time_us:.2f} us")
-    print(f"Torch achieved TOPS: {GEMM_TOPS / torch_avg_time_us / 1e6:.2f}")
+    print(f"Torch achieved TOPS: {GEMM_TOPS / torch_avg_time_us * 1e6:.2f}")
     print(f"Cute kernel execution time: {cute_avg_time_us:.2f} us")
-    print(f"Cute achieved TOPS: {GEMM_TOPS / cute_avg_time_us / 1e6:.2f}")
+    print(f"Cute achieved TOPS: {GEMM_TOPS / cute_avg_time_us * 1e6:.2f}")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="example of elementwise ops to demonstrate the numpy/pytorch as input for kernels"
     )
-    parser.add_argument("--M", "-M", default=512, type=int)
+    parser.add_argument("--M", "-M", default=1024, type=int)
     parser.add_argument("--N", "-N", default=1024, type=int)
-    parser.add_argument("--K", "-K", default=2048, type=int)
+    parser.add_argument("--K", "-K", default=1024, type=int)
     parser.add_argument("--L", "-L", default=1, type=int)
     parser.add_argument("--blas", type=str, default="tn", choices=["tn", "tt", "nn", "nt"])
     parser.add_argument("--warmup-iterations", default=10, type=int)
