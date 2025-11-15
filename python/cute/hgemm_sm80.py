@@ -57,6 +57,7 @@ mma_atom_shape = (2, 2, 1)
 threads = 128
 num_stages = 3
 copy_bits = 128
+bytes_alignment = 16
 # PARAMETERS DERIVED -------------------------------------
 vl = copy_bits // gemm_dtype.width
 tile_m, tile_n, tile_k = cta_tiler
@@ -67,6 +68,7 @@ assert tile_m % (mma_atom_m * mma_inst_m) == 0
 assert tile_n % (mma_atom_n * mma_inst_n) == 0
 assert mma_atom_k == 1
 assert tile_k % mma_inst_k == 0
+assert bytes_alignment
 # ========================================================
 
 
@@ -220,9 +222,10 @@ def hgemm_kernel(
     residual_k = cute.size(A, mode=[1]) - cutlass.Int32(tile_k) * cute.size(gA, mode=[2])
     gA = cute.domain_offset((0, residual_k, 0), gA)
     gB = cute.domain_offset((0, residual_k, 0), gB)
-    # Then make sure both gA and gB are 16B aligned
+    # Note that re-making gA gB and gC 16B aligned is very non-universal
     gA = cute.make_tensor(gA.iterator.align(16), gA.layout)
     gB = cute.make_tensor(gB.iterator.align(16), gB.layout)
+    gC = cute.make_tensor(gC.iterator.align(16), gC.layout)
 
     # Making coord tensors, appling the same tiling/shifting for I/O predication
     crdA = cute.make_identity_tensor(A.shape)
@@ -549,7 +552,7 @@ def hgemm(
     copy_atom_sync = cute.make_copy_atom(
         cute.nvgpu.CopyUniversalOp(),
         gemm_dtype,
-        # num_bits_per_copy=copy_bits,
+        num_bits_per_copy=copy_bits,
     )
     tiled_copy_A = make_tiled_copy_ABC(copy_atom_async, major_mode_A, (tile_m, tile_k))
     tiled_copy_B = make_tiled_copy_ABC(copy_atom_async, major_mode_B, (tile_n, tile_k))
@@ -559,6 +562,7 @@ def hgemm(
     # hmma shape_mnk should be (16, 8, 8), (16, 8, 16)
     # mma_atom_layout defines how the MMA atom duplicates across the M, N and K
     # permutation_mnk defines the tiling of M, N and K values based on MMA shape and atom shape
+    # * About how permutation_mnk works: https://github.com/NVIDIA/cutlass/discussions/1345
     mma_op = cute.nvgpu.warp.MmaF16BF16Op(gemm_dtype, acc_dtype, shape_mnk=mma_inst_shape)
     mma_atom_layout = cute.make_layout(mma_atom_shape)
     permutation_mnk = (
@@ -578,7 +582,7 @@ def hgemm(
     )
     grid_dim_rasterized = (
         grid_dim[0] * raster_factor,
-        math.ceil(grid_dim[1] / raster_factor),
+        (grid_dim[1] + raster_factor - 1) // raster_factor,
         grid_dim[2],
     )
 
@@ -655,10 +659,9 @@ def run_hgemm(
         if return_type == "torch_only":
             return a, b, c
 
-        tensor_align = 8 * 2  # assume all tensors are 8 elements aligned
-        a_tensor = from_dlpack(a, assumed_align=tensor_align)
-        b_tensor = from_dlpack(b, assumed_align=tensor_align)
-        c_tensor = from_dlpack(c, assumed_align=tensor_align)
+        a_tensor = from_dlpack(a, assumed_align=bytes_alignment)
+        b_tensor = from_dlpack(b, assumed_align=bytes_alignment)
+        c_tensor = from_dlpack(c, assumed_align=bytes_alignment)
 
         if dynamic_layout:
             a_tensor = a_tensor.mark_layout_dynamic(leading_dim=1 if a_transpose else 0)
